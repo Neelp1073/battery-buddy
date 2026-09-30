@@ -41,7 +41,7 @@ def test_settings_from_env(monkeypatch, mac_module):
     ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123)\t76%; discharging; 4:12 remaining present: true", (76, False)),
     ("Now drawing from 'AC Power'\n -InternalBattery-0 (id=123)\t41%; charging; 1:05 remaining present: true", (41, True)),
     ("Now drawing from 'AC Power'\n -InternalBattery-0 (id=123)\t100%; charged; 0:00 remaining present: true", (100, False)),
-])
+], ids=["discharging", "charging", "charged-at-100"])
 def test_read_mac_battery_parses_pmset(monkeypatch, mac_module, output, expected):
     send_battery = mac_module("send_battery")
     monkeypatch.setattr(send_battery.subprocess, "check_output", lambda *a, **k: output)

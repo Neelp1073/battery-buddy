@@ -264,8 +264,47 @@ def stats():
     rows = fetch_readings(request.args.get("device_id"), hours)
     return jsonify({"ok": True, "hours": hours, "stats": compute_stats(rows)})
 
+CHART_GAP_HOURS = 1.0  # break the chart line when readings are further apart than this
+DASHBOARD_RANGES = [(24, "24h"), (168, "7d"), (720, "30d"), (0, "All")]
+
+
+def chart_series(rows):
+    """{device_id: [{x: epoch ms, y: percent, c: charging}, ...]} for Chart.js.
+
+    A null point is inserted across long gaps so the line is not drawn
+    through periods with no data.
+    """
+    series = {}
+    for device_id, readings in readings_by_device(rows).items():
+        points, prev_ts = [], None
+        for r in readings:
+            ms = int(r["ts"].timestamp() * 1000)
+            if prev_ts and (r["ts"] - prev_ts).total_seconds() > CHART_GAP_HOURS * 3600:
+                points.append({"x": ms - 1, "y": None, "c": False})
+            points.append({"x": ms, "y": r["percent"], "c": r["is_charging"]})
+            prev_ts = r["ts"]
+        series[device_id] = points
+    return series
+
+
+@app.template_filter("hours")
+def format_hours(value):
+    """Format a number of hours as e.g. '3h 12m'; '—' when unknown."""
+    if value is None:
+        return "—"
+    minutes = int(round(value * 60))
+    h, m = divmod(minutes, 60)
+    if h >= 48:
+        return f"{h / 24:.1f} days"
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
 @app.get("/dashboard")
 def dashboard():
+    hours, error = parse_hours_arg()
+    if error:
+        hours = DEFAULT_WINDOW_HOURS
+    readings = fetch_readings(hours=hours)
     with db() as conn:
         rows = conn.execute(
             "SELECT device_id, device_type, battery_percent, is_charging, updated_at FROM devices ORDER BY device_id"
@@ -290,6 +329,10 @@ def dashboard():
         devices=devices,
         history=history,
         device_count=len(devices),
+        stats=compute_stats(readings),
+        chart_data=chart_series(readings),
+        hours=hours,
+        ranges=DASHBOARD_RANGES,
     )
 
 def hourly_worker():

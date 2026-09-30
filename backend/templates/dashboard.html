@@ -70,6 +70,23 @@
     th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
     tr:hover td { background: rgba(255,255,255,0.02); }
     .empty { color: var(--muted); padding: 18px 4px; }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 6px 0 12px; }
+    .section-head h2 { margin: 0; }
+    .ranges { display: flex; gap: 6px; }
+    .ranges a {
+      color: var(--muted); text-decoration: none; font-size: 0.82rem;
+      padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line);
+    }
+    .ranges a.active { color: var(--text); background: #1d2a47; }
+    .analytics { display: grid; gap: 14px; margin-bottom: 22px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 12px 0 14px; }
+    .stat { background: #0f1729; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+    .stat .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat .value { font-size: 1.25rem; font-weight: 700; margin-top: 4px; }
+    .stat .hint { color: var(--muted); font-size: 0.75rem; margin-top: 2px; }
+    .chart-box { position: relative; height: 240px; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 0.8rem; }
+    .swatch { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
   </style>
 </head>
 <body>
@@ -77,7 +94,7 @@
     <header>
       <div>
         <h1>Battery Buddy</h1>
-        <div class="sub">Live devices + recent history · auto-refreshes every 15s</div>
+        <div class="sub">Live devices, battery analytics + recent history · auto-refreshes every 15s</div>
       </div>
       <div class="pill">{{ device_count }} device{{ '' if device_count == 1 else 's' }} online</div>
     </header>
@@ -107,6 +124,60 @@
       {% endfor %}
     </div>
 
+    <div class="section-head">
+      <h2>Battery over time</h2>
+      <div class="legend">
+        <span><span class="swatch" style="background:#60a5fa"></span>On battery</span>
+        <span><span class="swatch" style="background:#22c55e"></span>Charging</span>
+      </div>
+      <nav class="ranges">
+        {% for value, label in ranges %}
+        <a href="?hours={{ value }}" class="{{ 'active' if hours == value else '' }}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+    </div>
+
+    <div class="analytics">
+      {% for s in stats %}
+      <div class="card">
+        <div class="row">
+          <div class="name">{{ s.device_id }}</div>
+          <span class="meta">{{ s.readings }} readings · {{ s.hours_tracked | hours }} tracked</span>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <div class="label">Avg drain</div>
+            <div class="value">{{ '%.1f' % s.avg_drain_per_hour if s.avg_drain_per_hour is not none else '—' }}<small>{{ ' %/h' if s.avg_drain_per_hour is not none else '' }}</small></div>
+            <div class="hint">while on battery</div>
+          </div>
+          <div class="stat">
+            <div class="label">Est. time to empty</div>
+            <div class="value">{{ s.est_hours_to_empty | hours }}</div>
+            <div class="hint">{{ 'charging now' if s.is_charging else 'from ' ~ s.current_percent ~ '% at avg drain' }}</div>
+          </div>
+          <div class="stat">
+            <div class="label">Charge sessions</div>
+            <div class="value">{{ s.charge_sessions }}</div>
+            <div class="hint">times plugged in</div>
+          </div>
+          <div class="stat">
+            <div class="label">Full-cycle equiv.</div>
+            <div class="value">{{ '%.1f' % s.equivalent_full_cycles }}</div>
+            <div class="hint">% gained ÷ 100</div>
+          </div>
+          <div class="stat">
+            <div class="label">Time charging</div>
+            <div class="value">{{ s.hours_charging | hours }}</div>
+            <div class="hint">{{ s.pct_time_charging if s.pct_time_charging is not none else '—' }}% of tracked time</div>
+          </div>
+        </div>
+        <div class="chart-box"><canvas data-device="{{ s.device_id }}"></canvas></div>
+      </div>
+      {% else %}
+      <div class="card empty">No readings in this time range.</div>
+      {% endfor %}
+    </div>
+
     <div class="card">
       <h2>Recent history</h2>
       {% if history %}
@@ -130,5 +201,86 @@
       {% endif %}
     </div>
   </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    const chartData = {{ chart_data | tojson }};
+    const BLUE = "#60a5fa", GREEN = "#22c55e";
+    const fmtTime = (ms) => new Date(ms).toLocaleString([], {
+      weekday: "short", hour: "2-digit", minute: "2-digit"
+    });
+
+    const HOUR = 3600 * 1000, DAY = 24 * HOUR;
+    let tickStep = DAY;
+    // Put x-axis ticks on round local times: midnights for multi-day
+    // ranges, every few hours for short ones.
+    function alignedTicks(axis) {
+      const span = axis.max - axis.min;
+      tickStep = span > 20 * DAY ? 4 * DAY : span > 2 * DAY ? DAY : span > 12 * HOUR ? 3 * HOUR : HOUR;
+      const start = new Date(axis.min);
+      start.setMinutes(0, 0, 0);
+      if (tickStep >= DAY) start.setHours(0);
+      else start.setHours(Math.ceil(start.getHours() / (tickStep / HOUR)) * (tickStep / HOUR));
+      const ticks = [];
+      for (let t = start.getTime(); t <= axis.max; t += tickStep) {
+        if (t >= axis.min) ticks.push({ value: t });
+      }
+      axis.ticks = ticks;
+    }
+    const tickLabel = (v) => tickStep >= DAY
+      ? new Date(v).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })
+      : new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    if (window.Chart) {
+      Chart.defaults.color = "#93a0b8";
+      Chart.defaults.borderColor = "#243049";
+      document.querySelectorAll("canvas[data-device]").forEach((canvas) => {
+        const points = chartData[canvas.dataset.device] || [];
+        const xs = points.map((p) => p.x);
+        new Chart(canvas, {
+          type: "line",
+          data: {
+            datasets: [{
+              label: "Battery %",
+              data: points,
+              parsing: { xAxisKey: "x", yAxisKey: "y" },
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.2,
+              fill: true,
+              backgroundColor: "rgba(96,165,250,0.08)",
+              segment: {
+                borderColor: (ctx) => points[ctx.p0DataIndex].c ? GREEN : BLUE,
+              },
+            }],
+          },
+          options: {
+            animation: false,
+            maintainAspectRatio: false,
+            interaction: { mode: "nearest", axis: "x", intersect: false },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  title: (items) => fmtTime(items[0].parsed.x),
+                  label: (item) => `${item.parsed.y}%` + (points[item.dataIndex].c ? " (charging)" : ""),
+                },
+              },
+            },
+            scales: {
+              x: {
+                type: "linear",
+                min: xs.length ? Math.min(...xs) : undefined,
+                max: xs.length ? Math.max(...xs) : undefined,
+                afterBuildTicks: alignedTicks,
+                ticks: { autoSkip: false, maxRotation: 0, callback: tickLabel },
+              },
+              y: { min: 0, max: 100, ticks: { callback: (v) => v + "%" } },
+            },
+          },
+        });
+      });
+    }
+  </script>
 </body>
 </html>

@@ -14,10 +14,21 @@ struct DevicesResponse: Codable {
     let devices: [DeviceInfo]
 }
 
+/// App settings. Edit these before running on your iPhone.
+enum AppConfig {
+    /// Base URL of the Battery Buddy backend running on your Mac.
+    /// Replace YOUR-MAC-IP with the Mac's Wi-Fi IP address, e.g. the address
+    /// Flask prints as "Running on http://<ip>:5001", or run
+    /// `ipconfig getifaddr en0` on the Mac. Both devices must share a network.
+    static let baseURL = "http://YOUR-MAC-IP:5001"
+
+    /// Name this iPhone reports to the backend.
+    static let deviceId = "neels-iphone"
+}
+
 struct ContentView: View {
-    // Update to your Mac Wi-Fi IP from Flask "Running on http://..."
-    let baseURL = "http://192.168.29.141:5001"
-    let myDeviceId = "neels-iphone"
+    let baseURL = AppConfig.baseURL
+    let myDeviceId = AppConfig.deviceId
 
     @State private var devices: [DeviceInfo] = []
     @State private var status = "Ready"

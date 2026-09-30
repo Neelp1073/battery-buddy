@@ -3,8 +3,9 @@ import re
 import subprocess
 import urllib.request
 
-BACKEND_URL = "http://127.0.0.1:5001/battery"
-DEVICE_ID = "neels-macbook"
+from settings import BACKEND_URL, DEVICE_ID
+
+BATTERY_ENDPOINT = f"{BACKEND_URL}/battery"
 DEVICE_TYPE = "mac"
 
 def read_mac_battery():
@@ -27,7 +28,7 @@ def send_to_backend(percent, is_charging):
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        BACKEND_URL,
+        BATTERY_ENDPOINT,
         data=data,
         headers={"Content-Type": "application/json"},
         method="POST",

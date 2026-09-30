@@ -1,13 +1,12 @@
 import json
 import time
+import urllib.parse
 import urllib.request
+from settings import BACKEND_URL as BASE, DEVICE_ID as MY_ID
 from show_notification import notify
 
-MY_ID = "neels-macbook"
-BASE = "http://127.0.0.1:5001"
-
 def get_pending():
-    url = f"{BASE}/alerts/pending?device_id={MY_ID}"
+    url = f"{BASE}/alerts/pending?device_id={urllib.parse.quote(MY_ID)}"
     with urllib.request.urlopen(url, timeout=10) as resp:
         return json.loads(resp.read().decode("utf-8")).get("alerts", [])
 

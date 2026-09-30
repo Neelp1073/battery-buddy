@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local configuration
+.env
+
+# SQLite databases (real and sample data are generated locally)
+*.db
+*.db-journal
+*.sqlite3
+
+# Analysis outputs
+analysis/output/
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Xcode
+xcuserdata/
+DerivedData/

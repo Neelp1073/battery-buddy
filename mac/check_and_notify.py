@@ -1,9 +1,9 @@
 import json
 import urllib.request
+from settings import BACKEND_URL, DEVICE_ID as MY_ID
 from show_notification import notify
 
-DEVICES_URL = "http://127.0.0.1:5001/devices"
-MY_ID = "neels-macbook"
+DEVICES_URL = f"{BACKEND_URL}/devices"
 
 with urllib.request.urlopen(DEVICES_URL, timeout=10) as resp:
     data = json.loads(resp.read().decode("utf-8"))

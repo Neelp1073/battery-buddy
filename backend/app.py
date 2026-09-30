@@ -1,14 +1,15 @@
 from flask import Flask, request, jsonify, render_template_string
+from contextlib import contextmanager
 from datetime import datetime, timezone
+import os
 import sqlite3
-from pathlib import Path
 import threading
 import time
 
+from config import load_config
+
 app = Flask(__name__)
-DB_PATH = Path(__file__).with_name("battery.db")
-LOW_BATTERY_THRESHOLD = 20
-HOURLY_SECONDS = 3600  # real hourly; use 60 only for testing
+app.config.update(load_config())
 
 DASHBOARD_HTML = """
 <!doctype html>
@@ -147,10 +148,19 @@ DASHBOARD_HTML = """
 </html>
 """
 
+@contextmanager
 def db():
-    conn = sqlite3.connect(DB_PATH)
+    """Open a connection, commit on success, and always close it."""
+    conn = sqlite3.connect(app.config["BB_DB_PATH"])
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_db():
     with db() as conn:
@@ -218,7 +228,7 @@ def upsert_device(device_id, device_type, battery_percent, is_charging, push_tok
             """,
             (device_id, battery_percent, int(is_charging), ts),
         )
-        if battery_percent <= LOW_BATTERY_THRESHOLD and not is_charging:
+        if battery_percent <= app.config["BB_LOW_BATTERY_THRESHOLD"] and not is_charging:
             msg = f"{device_id} is low: {battery_percent}%"
             conn.execute(
                 """
@@ -331,7 +341,7 @@ def dashboard():
 
 def hourly_worker():
     while True:
-        time.sleep(HOURLY_SECONDS)
+        time.sleep(app.config["BB_HOURLY_SECONDS"])
         ts = now_iso()
         with db() as conn:
             rows = conn.execute(
@@ -347,5 +357,9 @@ def hourly_worker():
 
 if __name__ == "__main__":
     init_db()
-    threading.Thread(target=hourly_worker, daemon=True).start()
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    debug = app.config["BB_DEBUG"]
+    # In debug mode the reloader runs this file twice; only start the
+    # background worker in the process that actually serves requests.
+    if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        threading.Thread(target=hourly_worker, daemon=True).start()
+    app.run(host=app.config["BB_HOST"], port=app.config["BB_PORT"], debug=debug)

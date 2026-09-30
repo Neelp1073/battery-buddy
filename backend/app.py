@@ -1,12 +1,13 @@
 from flask import Flask, request, jsonify, render_template_string
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import sqlite3
 import threading
 import time
 
 from config import load_config
+import stats as battery_stats
 
 app = Flask(__name__)
 app.config.update(load_config())
@@ -193,6 +194,10 @@ def init_db():
             delivered INTEGER NOT NULL DEFAULT 0
         )
         """)
+        # Speeds up per-device time-range queries for /history and /stats.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_device_time ON history (device_id, created_at)"
+        )
         conn.commit()
 
 def now_iso():
@@ -204,6 +209,73 @@ def level_class(pct):
     if pct <= 40:
         return "warn"
     return "ok"
+
+DEFAULT_WINDOW_HOURS = 168  # /history and /stats default to the last 7 days
+
+
+def parse_hours_arg():
+    """Read the optional ?hours= query arg. 0 means all history.
+
+    Returns (hours, error_message).
+    """
+    raw = request.args.get("hours")
+    if raw is None or raw == "":
+        return DEFAULT_WINDOW_HOURS, None
+    try:
+        hours = float(raw)
+    except ValueError:
+        return None, "hours must be a number"
+    if hours < 0:
+        return None, "hours must be >= 0"
+    return hours, None
+
+
+def fetch_readings(device_id=None, hours=DEFAULT_WINDOW_HOURS):
+    """Return history rows (oldest first), optionally filtered by device and window."""
+    sql = "SELECT device_id, battery_percent, is_charging, created_at FROM history"
+    where, params = [], []
+    if device_id:
+        where.append("device_id = ?")
+        params.append(device_id)
+    if hours:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        where.append("created_at >= ?")
+        params.append(since.isoformat())
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at, id"
+    with db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        {
+            "device_id": r["device_id"],
+            "battery_percent": r["battery_percent"],
+            "is_charging": bool(r["is_charging"]),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def readings_by_device(rows):
+    """Group /history rows into {device_id: [stats reading, ...]}."""
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(r["device_id"], []).append({
+            "ts": battery_stats.parse_ts(r["created_at"]),
+            "percent": r["battery_percent"],
+            "is_charging": r["is_charging"],
+        })
+    return grouped
+
+
+def compute_stats(rows):
+    """Per-device stats for a list of /history rows, sorted by device_id."""
+    return [
+        {"device_id": device_id, **battery_stats.device_stats(readings)}
+        for device_id, readings in sorted(readings_by_device(rows).items())
+    ]
+
 
 def upsert_device(device_id, device_type, battery_percent, is_charging, push_token=None):
     ts = now_iso()
@@ -310,6 +382,24 @@ def mark_delivered(alert_id):
         conn.execute("UPDATE alerts SET delivered=1 WHERE id=?", (alert_id,))
         conn.commit()
     return jsonify({"ok": True})
+
+@app.get("/history")
+def history():
+    """Battery readings over time. Query args: device_id, hours (default 168, 0 = all)."""
+    hours, error = parse_hours_arg()
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    rows = fetch_readings(request.args.get("device_id"), hours)
+    return jsonify({"ok": True, "hours": hours, "count": len(rows), "readings": rows})
+
+@app.get("/stats")
+def stats():
+    """Per-device analytics over the same window as /history."""
+    hours, error = parse_hours_arg()
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    rows = fetch_readings(request.args.get("device_id"), hours)
+    return jsonify({"ok": True, "hours": hours, "stats": compute_stats(rows)})
 
 @app.get("/dashboard")
 def dashboard():

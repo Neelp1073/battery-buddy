@@ -1,0 +1,6 @@
+# Backend
+flask>=3.0,<4
+# Analysis (analysis/*.py)
+pandas>=2.0
+# Tests
+pytest>=8.0

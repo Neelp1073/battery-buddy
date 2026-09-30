@@ -122,8 +122,12 @@ def write_db(rows, path):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
     import app as backend  # reuse the real schema
 
+    previous = backend.app.config["BB_DB_PATH"]
     backend.app.config["BB_DB_PATH"] = str(path)
-    backend.init_db()
+    try:
+        backend.init_db()
+    finally:
+        backend.app.config["BB_DB_PATH"] = previous
     demo_ids = tuple(DEMO_DEVICES)
     marks = ",".join("?" * len(demo_ids))
     with sqlite3.connect(path) as conn:
